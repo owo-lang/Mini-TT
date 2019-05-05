@@ -5,7 +5,6 @@
 module Main where
 
 import Prelude hiding ((*))
-import Control.Monad.Error()
 import Control.Monad.State
 import System.Environment
 import System.IO.Unsafe
