@@ -4,16 +4,55 @@
 
 module Main where
 
-import Prelude hiding ((*))
-import Control.Monad.Error()
-import Control.Monad.State
-import System.Environment
-import System.IO.Unsafe
+import           Control.Monad.Except ()
+import           Control.Monad.State
+import           Prelude              hiding ((*))
+import           System.Environment
+import           System.IO.Unsafe
 
-import Core.Abs
-import Core.Print
-import Core.ErrM
-import Core.Par
+-- import           Core.Abs
+-- import           Core.ErrM
+-- import           Core.Par
+-- import           Core.Print
+
+-- Generated
+
+newtype Ident = Ident String deriving (Eq, Ord, Show, Read)
+newtype CaseTk = CaseTk ((Int,Int),String)
+  deriving (Eq, Ord, Show, Read)
+newtype DataTk = DataTk ((Int,Int),String)
+  deriving (Eq, Ord, Show, Read)
+data Exp
+    = ELam Patt Exp
+    | ESet
+    | EPi Patt Exp Exp
+    | ESig Patt Exp Exp
+    | EOne
+    | Eunit
+    | EPair Exp Exp
+    | ECon Ident Exp
+    | EData DataTk [Summand]
+    | ECase CaseTk [Branch]
+    | EFst Exp
+    | ESnd Exp
+    | EApp Exp Exp
+    | EVar Ident
+    | EVoid
+    | EDec Decl Exp
+    | EPN
+  deriving (Eq, Ord, Show, Read)
+
+data Decl = Def Patt Exp Exp | Drec Patt Exp Exp
+  deriving (Eq, Ord, Show, Read)
+
+data Patt = PPair Patt Patt | Punit | PVar Ident
+  deriving (Eq, Ord, Show, Read)
+
+data Summand = Summand Ident Exp
+  deriving (Eq, Ord, Show, Read)
+
+data Branch = Branch Ident Exp
+  deriving (Eq, Ord, Show, Read)
 
 -----------------------------------------------------------
 -- Values
@@ -31,7 +70,7 @@ data Val =
   |  Sig Val Clos
   |  One
   |  Fun  Pos SClos
-  |  Data Pos SClos 
+  |  Data Pos SClos
   |  Nt Neut
   deriving Show
 
@@ -72,7 +111,7 @@ type Clos = Val -> Val
 instance Show Clos where show f = "Clos" ++ showVal 0 (Lam f)
 
 (*) :: Clos -> Val -> Val
-f * v = f v 
+f * v = f v
 
 mkCl :: Patt -> Exp -> Rho -> Clos
 mkCl p e rho = \v -> eval e (UpVar rho p v)
@@ -99,18 +138,21 @@ app w u = error ("app " ++ showVal 0 w ++ showVal 0 u)
 vfst :: Val -> Val
 vfst (Pair u1 _) = u1
 vfst (Nt k)      = Nt(Fst k)
-vfst w = error ("vfst " ++ showVal 0 w)
+vfst w           = error ("vfst " ++ showVal 0 w)
 
 vsnd :: Val -> Val
 vsnd (Pair _ u2) = u2
 vsnd (Nt k)      = Nt(Snd k)
-vsnd w =  error ("vsnd " ++ showVal 0 w)
+vsnd w           =  error ("vsnd " ++ showVal 0 w)
 
 ---------------------------------------------
 -- Environment
 ---------------------------------------------
 
-data Rho = RNil | UpVar Rho Patt Val | UpDec Rho Decl deriving Show
+data Rho
+  = RNil
+  | UpVar Rho Patt Val
+  | UpDec Rho Decl deriving Show
 
 getRho :: Rho -> Name -> Val
 getRho (UpVar rho p v) x | x `inPat` p = patProj p x v
@@ -170,17 +212,17 @@ eVar = EVar . Ident
 rbV :: Int -> Val  -> Exp -- to do: change to Normal Expression
 
 rbV i v0 = case v0 of
-      Lam f      -> ELam (pat i) (rbV (i+1) (f * gen i))
-      Pair u v   -> EPair (rbV i u) (rbV i v)
-      Con  c v   -> ECon  c (rbV i v)
-      Unit       -> Eunit 
-      Set        -> ESet
-      Pi  t g    -> EPi  (pat i) (rbV i t) (rbV (i+1) (g * gen i))
-      Sig t g    -> ESig (pat i) (rbV i t) (rbV (i+1) (g * gen i))
-      One        -> EOne
+      Lam f            -> ELam (pat i) (rbV (i+1) (f * gen i))
+      Pair u v         -> EPair (rbV i u) (rbV i v)
+      Con  c v         -> ECon  c (rbV i v)
+      Unit             -> Eunit
+      Set              -> ESet
+      Pi  t g          -> EPi  (pat i) (rbV i t) (rbV (i+1) (g * gen i))
+      Sig t g          -> ESig (pat i) (rbV i t) (rbV (i+1) (g * gen i))
+      One              -> EOne
       Fun  pos (_,rho) -> foldr (flip EApp) (eVar $ show pos) (rbRho i rho)
       Data pos (_,rho) -> foldr (flip EApp) (eVar $ show pos) (rbRho i rho)
-      Nt k       -> rbN i k
+      Nt k             -> rbN i k
     where pat j = PVar $ Ident $ "G#" ++ show j
           gen j = Nt $ Gen j (Ident "G#")
 
@@ -194,7 +236,7 @@ rbN i k0 = case k0 of
         foldr (flip EApp) (eVar $ show pos) (rbRho i rho) `EApp` rbN i k
 
 rbRho :: Int -> Rho -> [Exp]
-rbRho _ RNil = []
+rbRho _ RNil            = []
 rbRho i (UpVar rho _ v) = rbV i v : rbRho i rho
 rbRho i (UpDec rho _  ) = rbRho i rho
 
@@ -230,9 +272,13 @@ upG _   p             _         _ = fail $ "upG: p = " ++ printTree p
 genV :: Rho -> Val
 genV rho = Nt(Gen (lRho rho) (Ident "TC#"))
 
+-- | Check if a declaration is valid and return the extended context
 checkD :: Rho -> Gamma -> Decl -> G Gamma
+-- | Check that something is a valid type
 checkT :: Rho -> Gamma -> Exp  -> G ()
+-- | Check that the expression is of a given type
 check  :: Rho -> Gamma -> Exp  -> TVal -> G ()
+-- | Infer the type of an expression
 checkI :: Rho -> Gamma -> Exp  -> G TVal
 
 checkD rho gma d@(Def  p a e) = do
@@ -240,9 +286,9 @@ checkD rho gma d@(Def  p a e) = do
   checkT rho gma a
   let t = eval a rho
   check rho gma e t
-  gma1 <- upG gma p t (eval e rho)
-  return gma1
-           
+  newGma <- upG gma p t (eval e rho)
+  return newGma
+
 checkD rho gma d@(Drec p a e) = do
   debug $ "checking "++ printTree d
   checkT rho gma a
@@ -328,6 +374,11 @@ checkI rho gma e0 =
 -- The input is checked as an expression of type One.
 checkMain :: Exp -> G ()
 checkMain e = check RNil [] e One
+
+printTree = undefined
+pExp a = Bad []
+myLexer a = undefined
+data Wtf a = Bad String | Ok a
 
 -- checking a string input
 checkStr :: String -> IO()
